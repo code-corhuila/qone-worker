@@ -34,8 +34,15 @@ Piece page: `09-microservices/services/08-worker/README.md`. Story: `code-corhui
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\\Scripts\\activate
 pip install -e ".[dev]"
 ruff check .
-python -m pytest
+python -m pytest                                   # with TEST_DATABASE_URL, TEST_OUTBOX_DOMAIN and TEST_RABBITMQ_URL for the relay test
+cp .env.example .env
+python -m apps.worker                              # health at http://localhost:8000/health
 ```
+
+Configuration: `RABBITMQ_URL` (required), one `<DOMAIN>_OUTBOX_URL` per outbox to relay (billing,
+catalog, enrollment; a missing one is simply not relayed), `RELAY_EVERY_SECONDS` (5),
+`BATCH_SIZE` (100), `RUN_TIMEOUT_SECONDS` (20). Container image and compose in `deploy/`; the
+compose fragment is what `qone-infra` includes next to its RabbitMQ.
 
 ## Branching
 
