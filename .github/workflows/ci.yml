@@ -1,0 +1,88 @@
+name: CI
+on:
+  pull_request:
+    branches: [develop, qa, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_DB: catalog
+          POSTGRES_USER: catalog
+          POSTGRES_PASSWORD: catalog
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U catalog -d catalog" --health-interval 5s --health-timeout 3s --health-retries 10
+      advisor:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_DB: advisor
+          POSTGRES_USER: advisor
+          POSTGRES_PASSWORD: advisor
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U advisor -d advisor" --health-interval 5s --health-timeout 3s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 10s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: A real outbox to relay (the schema of qone-catalog-db, when its develop has it)
+        run: |
+          git clone --depth 1 --branch ${CATALOG_DB_REF:-develop} https://github.com/code-corhuila/qone-catalog-db.git /tmp/catalog-db
+          if [ -d /tmp/catalog-db/migrations ]; then
+            docker run --rm --network host -v /tmp/catalog-db:/workspace flyway/flyway:10.22.0 \
+              -workingDirectory=/workspace -configFiles=/workspace/flyway.toml \
+              -url=jdbc:postgresql://localhost:5432/catalog -user=catalog -password=catalog migrate
+            echo "TEST_DATABASE_URL=postgresql://catalog:catalog@localhost:5432/catalog" >> "$GITHUB_ENV"
+          else
+            echo "::notice::qone-catalog-db has no migrations yet; the relay integration test is skipped"
+          fi
+      - name: The advisor's schema for its maintenance jobs (qone-advisor-db)
+        run: |
+          git clone --depth 1 --branch ${ADVISOR_DB_REF:-develop} https://github.com/code-corhuila/qone-advisor-db.git /tmp/advisor-db
+          if [ -d /tmp/advisor-db/migrations ]; then
+            docker run --rm --network host -v /tmp/advisor-db:/workspace flyway/flyway:10.22.0 \
+              -workingDirectory=/workspace -configFiles=/workspace/flyway.toml \
+              -url=jdbc:postgresql://localhost:5433/advisor -user=advisor -password=advisor migrate
+            echo "TEST_ADVISOR_DATABASE_URL=postgresql://advisor:advisor@localhost:5433/advisor" >> "$GITHUB_ENV"
+          else
+            echo "::notice::qone-advisor-db has no migrations yet; the advisor maintenance test is skipped"
+          fi
+      - name: Jobs, adapters, architecture and the relay against PostgreSQL and RabbitMQ
+        run: python -m pytest
+        env:
+          TEST_OUTBOX_DOMAIN: catalog
+          TEST_RABBITMQ_URL: amqp://guest:guest@localhost:5672/%2F
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile -t qone-worker:ci .
+      - name: Run it with RabbitMQ and no outbox, then smoke-check it
+        run: |
+          docker network create ci
+          docker run -d --rm --name rabbitmq --network ci rabbitmq:3.13-alpine
+          docker run -d --rm --name worker-ci --network ci -p 8013:8000 -e RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2F qone-worker:ci
+          for i in $(seq 1 30); do curl -fs http://localhost:8013/health && break; sleep 1; done
+          sh deploy/smoke.sh http://localhost:8013
+          docker stop worker-ci rabbitmq
