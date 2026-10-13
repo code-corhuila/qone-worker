@@ -1,6 +1,7 @@
-"""The scheduler (Annex D inbound adapter): runs every job on its period, gives each run a fresh
-X-Correlation-Id and a deadline, writes one log line per run with its traceId, and keeps the last
-report of each job for the health endpoint. A job that raises is logged and runs again next time."""
+"""The scheduler (Annex D inbound adapter): runs every job on its period (every tick, or its own
+`every_seconds`), gives each run a fresh X-Correlation-Id and a deadline, writes one log line per
+run with its traceId, and keeps the last report of each job for the health endpoint. A job that
+raises is logged and runs again next time."""
 
 import logging
 import threading
@@ -26,11 +27,18 @@ class Scheduler:
         self._timeout = run_timeout_seconds
         self._monotonic = monotonic
         self.last: dict[str, dict] = {}
+        self._next_due: dict[str, float] = {}
         self._stop = threading.Event()
 
     def run_once(self) -> list[RunReport]:
         reports = []
         for job in self._jobs:
+            period = getattr(job, "every_seconds", None)
+            if period is not None:
+                now = self._monotonic()
+                if now < self._next_due.get(job.name, now):
+                    continue
+                self._next_due[job.name] = now + period
             context = RunContext(
                 correlation_id=f"worker-{job.name}-{uuid.uuid4()}", deadline=self._monotonic() + self._timeout
             )

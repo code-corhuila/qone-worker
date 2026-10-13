@@ -28,6 +28,20 @@ Piece page: `09-microservices/services/08-worker/README.md`. Story: `code-corhui
 - The outbox relay is the one documented exception to "only through the API"; it touches the
   outbox table and nothing else.
 
+## The advisor's maintenance
+
+With the advisor's database (`ADVISOR_MAINTENANCE_URL`, or the `ADVISOR_OUTBOX_URL` the relay
+already has) two more jobs run, both named in `09-microservices/services/06-advisor-api` and
+`06-data/models.md`:
+
+| Job | Every | What it does |
+|---|---|---|
+| `expire-plans` | `EXPIRE_PLANS_EVERY_SECONDS` (30) | a `PROPOSED` plan past its `expiresAt` (10 minutes after the proposal) becomes `EXPIRED` (INV-ADV-003) |
+| `prune-llm-cache` | `PRUNE_LLM_CACHE_EVERY_SECONDS` (3600) | deletes `llm_cache` entries older than `LLM_CACHE_KEEP_DAYS` (7) |
+
+Both claim rows with `SKIP LOCKED`, work in batches of `BATCH_SIZE` until nothing is due or the
+run's deadline passes, and appear in `/health` with their last run.
+
 ## How to run it
 
 ```bash
