@@ -8,7 +8,7 @@ Governance and documentation live in [`qone-docs`](https://github.com/code-corhu
 ## Purpose
 
 Everything that happens without anyone asking (course norm 5.7, Annex D). Its first job is the
-**outbox relay** of ADR-008 point 4 and norm 5.3.11: every event billing, catalog and enrollment
+**outbox relay** of ADR-008 point 4 and norm 5.3.11: every event billing, catalog, enrollment and advisor
 write to their outbox in the transaction of a change reaches the `qampus.events` topic exchange of
 RabbitMQ with the routing key `<domain>.<EventType>` (`catalog.SeatReserved`, `billing.TuitionPaid`).
 Consumers (the enrollment projections, the advisor) keep an inbox by event id. Python 3.12,
@@ -28,6 +28,20 @@ Piece page: `09-microservices/services/08-worker/README.md`. Story: `code-corhui
 - The outbox relay is the one documented exception to "only through the API"; it touches the
   outbox table and nothing else.
 
+## The advisor's maintenance
+
+With the advisor's database (`ADVISOR_MAINTENANCE_URL`, or the `ADVISOR_OUTBOX_URL` the relay
+already has) two more jobs run, both named in `09-microservices/services/06-advisor-api` and
+`06-data/models.md`:
+
+| Job | Every | What it does |
+|---|---|---|
+| `expire-plans` | `EXPIRE_PLANS_EVERY_SECONDS` (30) | a `PROPOSED` plan past its `expiresAt` (10 minutes after the proposal) becomes `EXPIRED` (INV-ADV-003) |
+| `prune-llm-cache` | `PRUNE_LLM_CACHE_EVERY_SECONDS` (3600) | deletes `llm_cache` entries older than `LLM_CACHE_KEEP_DAYS` (7) |
+
+Both claim rows with `SKIP LOCKED`, work in batches of `BATCH_SIZE` until nothing is due or the
+run's deadline passes, and appear in `/health` with their last run.
+
 ## How to run it
 
 ```bash
@@ -40,7 +54,7 @@ python -m apps.worker                              # health at http://localhost:
 ```
 
 Configuration: `RABBITMQ_URL` (required), one `<DOMAIN>_OUTBOX_URL` per outbox to relay (billing,
-catalog, enrollment; a missing one is simply not relayed), `RELAY_EVERY_SECONDS` (5),
+catalog, enrollment, advisor; a missing one is simply not relayed), `RELAY_EVERY_SECONDS` (5),
 `BATCH_SIZE` (100), `RUN_TIMEOUT_SECONDS` (20). Container image and compose in `deploy/`; the
 compose fragment is what `qone-infra` includes next to its RabbitMQ.
 
