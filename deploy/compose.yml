@@ -1,0 +1,29 @@
+# The worker as qone-infra composes it (Annex G): expose only, a health endpoint and no business
+# HTTP. It relays the outboxes of billing, catalog and enrollment to the RabbitMQ that qone-infra
+# composes; the relay connections are the documented exception of its piece page. Every value
+# comes from .env.
+services:
+  qone-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: qone-worker:${IMAGE_TAG:-dev}
+    container_name: qone-worker
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
+      BILLING_OUTBOX_URL: postgresql://${BILLING_DB_USER:-billing}:${BILLING_DB_PASSWORD:?BILLING_DB_PASSWORD is required}@billing-db:5432/${BILLING_DB_NAME:-billing}
+      CATALOG_OUTBOX_URL: postgresql://${CATALOG_DB_USER:-catalog}:${CATALOG_DB_PASSWORD:?CATALOG_DB_PASSWORD is required}@catalog-db:5432/${CATALOG_DB_NAME:-catalog}
+      ENROLLMENT_OUTBOX_URL: postgresql://${ENROLLMENT_DB_USER:-enrollment}:${ENROLLMENT_DB_PASSWORD:?ENROLLMENT_DB_PASSWORD is required}@enrollment-db:5432/${ENROLLMENT_DB_NAME:-enrollment}
+      RELAY_EVERY_SECONDS: ${RELAY_EVERY_SECONDS:-5}
+      BATCH_SIZE: ${BATCH_SIZE:-100}
+      RUN_TIMEOUT_SECONDS: ${RUN_TIMEOUT_SECONDS:-20}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "8000"
+    networks:
+      - platform
+
+networks:
+  platform:
+    external: true
