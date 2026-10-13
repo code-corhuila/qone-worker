@@ -1,5 +1,6 @@
 """A unit of scheduled work (Annex D): a name and `run`, which returns how many items it
-processed and how many failed. The scheduler gives every run its correlation id and deadline."""
+processed and how many failed. The scheduler gives every run its correlation id and deadline;
+a job with `every_seconds` runs on that period instead of every tick of the scheduler."""
 
 from dataclasses import dataclass
 from typing import Protocol

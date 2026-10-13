@@ -19,6 +19,15 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U catalog -d catalog" --health-interval 5s --health-timeout 3s --health-retries 10
+      advisor:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_DB: advisor
+          POSTGRES_USER: advisor
+          POSTGRES_PASSWORD: advisor
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U advisor -d advisor" --health-interval 5s --health-timeout 3s --health-retries 10
       rabbitmq:
         image: rabbitmq:3.13-alpine
         ports: ["5672:5672"]
@@ -43,6 +52,17 @@ jobs:
             echo "TEST_DATABASE_URL=postgresql://catalog:catalog@localhost:5432/catalog" >> "$GITHUB_ENV"
           else
             echo "::notice::qone-catalog-db has no migrations yet; the relay integration test is skipped"
+          fi
+      - name: The advisor's schema for its maintenance jobs (qone-advisor-db)
+        run: |
+          git clone --depth 1 --branch ${ADVISOR_DB_REF:-develop} https://github.com/code-corhuila/qone-advisor-db.git /tmp/advisor-db
+          if [ -d /tmp/advisor-db/migrations ]; then
+            docker run --rm --network host -v /tmp/advisor-db:/workspace flyway/flyway:10.22.0 \
+              -workingDirectory=/workspace -configFiles=/workspace/flyway.toml \
+              -url=jdbc:postgresql://localhost:5433/advisor -user=advisor -password=advisor migrate
+            echo "TEST_ADVISOR_DATABASE_URL=postgresql://advisor:advisor@localhost:5433/advisor" >> "$GITHUB_ENV"
+          else
+            echo "::notice::qone-advisor-db has no migrations yet; the advisor maintenance test is skipped"
           fi
       - name: Jobs, adapters, architecture and the relay against PostgreSQL and RabbitMQ
         run: python -m pytest
