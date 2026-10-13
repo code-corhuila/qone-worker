@@ -15,7 +15,7 @@ from worker.adapter.outbound.outbox import PostgresOutbox
 from worker.adapter.outbound.rabbitmq import RabbitPublisher
 from worker.application.usecase.relay_outbox import RelayOutbox
 
-DOMAINS = ("billing", "catalog", "enrollment")
+DOMAINS = ("billing", "catalog", "enrollment", "advisor")
 
 
 class MonotonicClock:
