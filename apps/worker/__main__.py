@@ -1,6 +1,6 @@
 """`python -m apps.worker`: the composition root (Annex D). Reads the configuration, declares every
-limit, builds the relay over the outboxes that are configured, serves the health endpoint and runs
-the scheduler until SIGTERM."""
+limit, builds the relay over the outboxes that are configured and, with the advisor's database,
+its two maintenance jobs; serves the health endpoint and runs the scheduler until SIGTERM."""
 
 import json
 import logging
@@ -11,8 +11,10 @@ import time
 
 from worker.adapter.inbound.health import serve_health
 from worker.adapter.inbound.scheduler import Scheduler
+from worker.adapter.outbound.advisor import PostgresAdvisorMaintenance
 from worker.adapter.outbound.outbox import PostgresOutbox
 from worker.adapter.outbound.rabbitmq import RabbitPublisher
+from worker.application.usecase.advisor_maintenance import ExpirePlans, PruneLlmCache
 from worker.application.usecase.relay_outbox import RelayOutbox
 
 DOMAINS = ("billing", "catalog", "enrollment", "advisor")
@@ -66,7 +68,24 @@ def main() -> None:
         timeout,
     )
 
-    scheduler = Scheduler([RelayOutbox(outboxes, RabbitPublisher(rabbit), MonotonicClock(), batch)], every, timeout)
+    jobs = [RelayOutbox(outboxes, RabbitPublisher(rabbit), MonotonicClock(), batch)]
+    advisor_url = env.get("ADVISOR_MAINTENANCE_URL", "").strip() or env.get("ADVISOR_OUTBOX_URL", "").strip()
+    if advisor_url:
+        advisor = PostgresAdvisorMaintenance(advisor_url)
+        expire_every = float(env.get("EXPIRE_PLANS_EVERY_SECONDS", "30"))
+        prune_every = float(env.get("PRUNE_LLM_CACHE_EVERY_SECONDS", "3600"))
+        keep_days = int(env.get("LLM_CACHE_KEEP_DAYS", "7"))
+        jobs += [
+            ExpirePlans(advisor, MonotonicClock(), batch, expire_every),
+            PruneLlmCache(advisor, MonotonicClock(), batch, keep_days, prune_every),
+        ]
+        log.info(
+            "advisor jobs: expire plans every %ss, prune the LLM cache older than %s days every %ss",
+            expire_every,
+            keep_days,
+            prune_every,
+        )
+    scheduler = Scheduler(jobs, every, timeout)
     server = serve_health(scheduler, int(env.get("PORT", "8000")))
     signal.signal(signal.SIGTERM, lambda *_: scheduler.stop())
     try:
