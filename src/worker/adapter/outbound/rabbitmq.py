@@ -5,6 +5,7 @@ retried a bounded number of times with exponential backoff and full jitter (Anne
 
 import json
 import random
+import socket
 import time
 from collections.abc import Callable
 
@@ -63,9 +64,29 @@ class RabbitPublisher:
 
         retrying(attempt, self._attempts, lambda e: isinstance(e, AMQPError), self._backoff, self._sleep, self._rand)
 
+    def close(self) -> None:
+        """Closes the AMQP connection on shutdown; a connection already gone is not an error."""
+        connection, self._connection, self._channel = self._connection, None, None
+        if connection is not None and connection.is_open:
+            try:
+                connection.close()
+            except AMQPError:
+                pass
+
     def ping(self) -> bool:
         try:
             self._open()
             return True
         except AMQPError:
             return False
+
+
+def broker_reachable(url: str, timeout_seconds: float = 2.0) -> bool:
+    """The health check of the broker: a TCP connection to its host and port within the timeout.
+    It never touches the publisher's connection, which belongs to the scheduler's thread."""
+    params = pika.URLParameters(url)
+    try:
+        with socket.create_connection((params.host, params.port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
