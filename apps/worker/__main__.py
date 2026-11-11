@@ -10,6 +10,7 @@ import sys
 import time
 
 from worker.adapter.inbound.health import serve_health
+from worker.adapter.inbound.metrics import WorkerMetrics
 from worker.adapter.inbound.scheduler import Scheduler
 from worker.adapter.outbound.advisor import PostgresAdvisorMaintenance
 from worker.adapter.outbound.outbox import PostgresOutbox
@@ -85,8 +86,9 @@ def main() -> None:
             keep_days,
             prune_every,
         )
-    scheduler = Scheduler(jobs, every, timeout)
-    server = serve_health(scheduler, int(env.get("PORT", "8000")))
+    metrics = WorkerMetrics()
+    scheduler = Scheduler(jobs, every, timeout, on_run=metrics.run_finished)
+    server = serve_health(scheduler, int(env.get("PORT", "8000")), metrics=metrics)
     signal.signal(signal.SIGTERM, lambda *_: scheduler.stop())
     try:
         scheduler.serve_forever()

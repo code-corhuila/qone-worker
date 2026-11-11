@@ -1,6 +1,7 @@
 """The scheduler (Annex D inbound adapter): runs every job on its period (every tick, or its own
 `every_seconds`), gives each run a fresh X-Correlation-Id and a deadline, writes one log line per
-run with its traceId, and keeps the last report of each job for the health endpoint. A job that
+run with its traceId, keeps the last report of each job for the health endpoint and hands every
+finished run to `on_run` (the metrics). A job that
 raises is logged and runs again next time."""
 
 import logging
@@ -21,7 +22,9 @@ class Scheduler:
         every_seconds: float,
         run_timeout_seconds: float,
         monotonic: Callable[[], float] = time.monotonic,
+        on_run: Callable[[str, RunReport | None], None] | None = None,
     ) -> None:
+        self._on_run = on_run or (lambda job, report: None)
         self._jobs = jobs
         self._every = every_seconds
         self._timeout = run_timeout_seconds
@@ -47,8 +50,10 @@ class Scheduler:
             except Exception:  # noqa: BLE001 - a failed run is logged; the next one tries again
                 log.exception("run failed", extra={"traceId": context.correlation_id, "job": job.name})
                 self.last[job.name] = {"ok": False, "traceId": context.correlation_id}
+                self._on_run(job.name, None)
                 continue
             reports.append(report)
+            self._on_run(job.name, report)
             self.last[job.name] = {
                 "ok": True,
                 "processed": report.processed,

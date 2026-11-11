@@ -42,6 +42,15 @@ already has) two more jobs run, both named in `09-microservices/services/06-advi
 Both claim rows with `SKIP LOCKED`, work in batches of `BATCH_SIZE` until nothing is due or the
 run's deadline passes, and appear in `/health` with their last run.
 
+## Metrics (HU-OBS-001)
+
+`GET /metrics` on the health port (8000) serves, for the Prometheus of `qone-infra`
+(`qone-worker:8000/metrics` on the platform network): `worker_job_runs_total{job,outcome}`
+(`ok`/`failed`), `worker_events_relayed_total{source}` (per domain outbox),
+`worker_reservations_expired_total`, and the common `http_server_requests_total` and
+`http_server_request_duration_seconds` of its own HTTP (`route` is `/health` or `unmatched`; the
+scrape is not counted).
+
 ## How to run it
 
 ```bash
