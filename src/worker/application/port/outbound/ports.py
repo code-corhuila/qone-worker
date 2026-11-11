@@ -1,6 +1,6 @@
 """What the jobs need: an outbox the relay can claim a bounded batch from and mark as published,
-a publisher that confirms delivery, the advisor's maintenance, and a monotonic clock for the
-run's deadline."""
+a publisher that confirms delivery, the advisor's maintenance, the catalog's API as the worker
+sees it, and a monotonic clock for the run's deadline."""
 
 from collections.abc import Callable
 from typing import Protocol
@@ -28,6 +28,13 @@ class AdvisorMaintenance(Protocol):
 
     def prune_llm_cache(self, older_than_days: int, limit: int) -> int:
         """Deletes at most `limit` cache entries older than the given days; returns how many."""
+
+
+class CatalogApi(Protocol):
+    def expire_overdue(self, limit: int, correlation_id: str) -> tuple[int, int]:
+        """CA-13 with the worker's SERVICE token: the catalog expires at most `limit` overdue RESERVED
+        reservations; returns (expired, failed) from the answer's `meta`. Raises when the catalog
+        refuses the call or still does not answer after the adapter's bounded retries."""
 
 
 class MonotonicClock(Protocol):
