@@ -1,6 +1,7 @@
 """`python -m apps.worker`: the composition root (Annex D). Reads the configuration, declares every
-limit, builds the relay over the outboxes that are configured and, with the advisor's database,
-its two maintenance jobs; serves the health endpoint and runs the scheduler until SIGTERM."""
+limit, builds the relay over the outboxes that are configured, with the advisor's database its two
+maintenance jobs and, with a SERVICE_TOKEN, the sweep of overdue seat reservations through the
+catalog's API; serves the health endpoint and runs the scheduler until SIGTERM."""
 
 import json
 import logging
@@ -12,12 +13,18 @@ import time
 from worker.adapter.inbound.health import serve_health
 from worker.adapter.inbound.scheduler import Scheduler
 from worker.adapter.outbound.advisor import PostgresAdvisorMaintenance
+from worker.adapter.outbound.catalog import CatalogHttpClient
 from worker.adapter.outbound.outbox import PostgresOutbox
 from worker.adapter.outbound.rabbitmq import RabbitPublisher
 from worker.application.usecase.advisor_maintenance import ExpirePlans, PruneLlmCache
+from worker.application.usecase.expire_reservations import ExpireReservations
 from worker.application.usecase.relay_outbox import RelayOutbox
 
 DOMAINS = ("billing", "catalog", "enrollment", "advisor")
+# Explicit limits (Annex D), declared here with their values.
+RETRY_BACKOFF_SECONDS = 0.2  # full jitter: up to 0.4 s before the 2nd attempt, 0.8 s before the 3rd
+PUBLISH_ATTEMPTS = 3
+CATALOG_SWEEP_MAX = 500  # the largest `limit` CA-13 accepts
 
 
 class MonotonicClock:
@@ -68,7 +75,8 @@ def main() -> None:
         timeout,
     )
 
-    jobs = [RelayOutbox(outboxes, RabbitPublisher(rabbit), MonotonicClock(), batch)]
+    publisher = RabbitPublisher(rabbit, PUBLISH_ATTEMPTS, RETRY_BACKOFF_SECONDS)
+    jobs = [RelayOutbox(outboxes, publisher, MonotonicClock(), batch)]
     advisor_url = env.get("ADVISOR_MAINTENANCE_URL", "").strip() or env.get("ADVISOR_OUTBOX_URL", "").strip()
     if advisor_url:
         advisor = PostgresAdvisorMaintenance(advisor_url)
@@ -85,6 +93,23 @@ def main() -> None:
             keep_days,
             prune_every,
         )
+    token = env.get("SERVICE_TOKEN", "").strip()
+    if token:
+        catalog_url = env.get("CATALOG_API_URL", "http://qone-catalog-api:8000").strip()
+        sweep_every = float(env.get("EXPIRE_RESERVATIONS_EVERY_SECONDS", "60"))
+        http_timeout = float(env.get("HTTP_TIMEOUT_SECONDS", "5"))
+        http_attempts = int(env.get("HTTP_ATTEMPTS", "3"))
+        catalog = CatalogHttpClient(catalog_url, token, http_timeout, http_attempts, RETRY_BACKOFF_SECONDS)
+        jobs.append(ExpireReservations(catalog, MonotonicClock(), min(batch, CATALOG_SWEEP_MAX), sweep_every))
+        log.info(
+            "expire-reservations every %ss through %s; http timeout %ss, %s attempts",
+            sweep_every,
+            catalog_url,
+            http_timeout,
+            http_attempts,
+        )
+    else:
+        log.warning("SERVICE_TOKEN not set: the expire-reservations job does not run")
     scheduler = Scheduler(jobs, every, timeout)
     server = serve_health(scheduler, int(env.get("PORT", "8000")))
     signal.signal(signal.SIGTERM, lambda *_: scheduler.stop())
