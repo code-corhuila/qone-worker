@@ -1,7 +1,8 @@
 # The worker as qone-infra composes it (Annex G): expose only, a health endpoint and no business
 # HTTP. It relays the outboxes of billing, catalog, enrollment and advisor to the RabbitMQ that qone-infra
-# composes; the relay connections are the documented exception of its piece page. Every value
-# comes from .env.
+# composes; the relay connections are the documented exception of its piece page. It expires the
+# overdue seat reservations through the catalog's API with its own SERVICE token (HU-PLT-003).
+# Every value comes from .env.
 services:
   qone-worker:
     build:
@@ -20,6 +21,11 @@ services:
       EXPIRE_PLANS_EVERY_SECONDS: ${EXPIRE_PLANS_EVERY_SECONDS:-30}
       PRUNE_LLM_CACHE_EVERY_SECONDS: ${PRUNE_LLM_CACHE_EVERY_SECONDS:-3600}
       LLM_CACHE_KEEP_DAYS: ${LLM_CACHE_KEEP_DAYS:-7}
+      CATALOG_API_URL: ${CATALOG_API_URL:-http://qone-catalog-api:8000}
+      SERVICE_TOKEN: ${WORKER_SERVICE_TOKEN:?WORKER_SERVICE_TOKEN is required}
+      EXPIRE_RESERVATIONS_EVERY_SECONDS: ${EXPIRE_RESERVATIONS_EVERY_SECONDS:-60}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-5}
+      HTTP_ATTEMPTS: ${HTTP_ATTEMPTS:-3}
       BATCH_SIZE: ${BATCH_SIZE:-100}
       RUN_TIMEOUT_SECONDS: ${RUN_TIMEOUT_SECONDS:-20}
       LOG_LEVEL: ${LOG_LEVEL:-info}

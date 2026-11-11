@@ -1,17 +1,34 @@
 """The publisher over RabbitMQ (pika): a durable topic exchange `qampus.events`, persistent messages
 with the event id as message id and the run's correlation id, and publisher confirms, so an event
-counts as published only when the broker took it. A dropped connection is reopened once."""
+counts as published only when the broker took it. A dropped connection is reopened and the publish
+retried a bounded number of times with exponential backoff and full jitter (Annex D rule 7)."""
 
 import json
+import random
+import socket
+import time
+from collections.abc import Callable
 
 import pika
 from pika.exceptions import AMQPError
 
+from worker.adapter.outbound.retry import retrying
 from worker.domain.event import EXCHANGE, OutboxEvent
 
 
 class RabbitPublisher:
-    def __init__(self, url: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        attempts: int = 3,
+        backoff_seconds: float = 0.2,
+        sleep: Callable[[float], None] = time.sleep,
+        rand: Callable[[float, float], float] = random.uniform,
+    ) -> None:
+        self._attempts = attempts
+        self._backoff = backoff_seconds
+        self._sleep = sleep
+        self._rand = rand
         self._params = pika.URLParameters(url)
         self._params.socket_timeout = 5
         self._params.blocked_connection_timeout = 10
@@ -35,16 +52,26 @@ class RabbitPublisher:
             correlation_id=correlation_id,
             type=event.event_type,
         )
-        for attempt in (1, 2):
+
+        def attempt() -> None:
             try:
                 self._open().basic_publish(
                     exchange=EXCHANGE, routing_key=event.routing_key, body=body, properties=properties
                 )
-                return
             except AMQPError:
-                self._channel = None
-                if attempt == 2:
-                    raise
+                self._channel = None  # reopened by the next attempt
+                raise
+
+        retrying(attempt, self._attempts, lambda e: isinstance(e, AMQPError), self._backoff, self._sleep, self._rand)
+
+    def close(self) -> None:
+        """Closes the AMQP connection on shutdown; a connection already gone is not an error."""
+        connection, self._connection, self._channel = self._connection, None, None
+        if connection is not None and connection.is_open:
+            try:
+                connection.close()
+            except AMQPError:
+                pass
 
     def ping(self) -> bool:
         try:
@@ -52,3 +79,14 @@ class RabbitPublisher:
             return True
         except AMQPError:
             return False
+
+
+def broker_reachable(url: str, timeout_seconds: float = 2.0) -> bool:
+    """The health check of the broker: a TCP connection to its host and port within the timeout.
+    It never touches the publisher's connection, which belongs to the scheduler's thread."""
+    params = pika.URLParameters(url)
+    try:
+        with socket.create_connection((params.host, params.port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False

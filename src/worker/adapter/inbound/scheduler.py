@@ -1,8 +1,10 @@
 """The scheduler (Annex D inbound adapter): runs every job on its period (every tick, or its own
 `every_seconds`), gives each run a fresh X-Correlation-Id and a deadline, writes one log line per
 run with its traceId, keeps the last report of each job for the health endpoint and hands every
-finished run to `on_run` (the metrics). A job that
-raises is logged and runs again next time."""
+finished run to `on_run` (the metrics). A job that raises is logged and runs again next time.
+`stop` (SIGTERM, SIGINT) lets the run in progress finish and starts no other; `stale` names the
+jobs without a successful run for three of their periods plus the run timeout of grace
+(HU-PLT-003)."""
 
 import logging
 import threading
@@ -32,10 +34,14 @@ class Scheduler:
         self.last: dict[str, dict] = {}
         self._next_due: dict[str, float] = {}
         self._stop = threading.Event()
+        self._started = monotonic()
+        self._succeeded: dict[str, float] = {}
 
     def run_once(self) -> list[RunReport]:
         reports = []
         for job in self._jobs:
+            if self._stop.is_set():  # shutting down: the run in progress finished, no other starts
+                break
             period = getattr(job, "every_seconds", None)
             if period is not None:
                 now = self._monotonic()
@@ -53,6 +59,7 @@ class Scheduler:
                 self._on_run(job.name, None)
                 continue
             reports.append(report)
+            self._succeeded[job.name] = self._monotonic()
             self._on_run(job.name, report)
             self.last[job.name] = {
                 "ok": True,
@@ -80,3 +87,18 @@ class Scheduler:
 
     def stop(self) -> None:
         self._stop.set()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    def stale(self) -> dict[str, float]:
+        """Seconds since the last success (or the start) of every job past 3 periods + the run timeout."""
+        now = self._monotonic()
+        late = {}
+        for job in self._jobs:
+            period = getattr(job, "every_seconds", None) or self._every
+            age = now - self._succeeded.get(job.name, self._started)
+            if age > 3 * period + self._timeout:
+                late[job.name] = round(age, 1)
+        return late
