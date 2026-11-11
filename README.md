@@ -70,6 +70,15 @@ uses it. SIGTERM (`docker stop`) and SIGINT stop the scheduling: the run in prog
 no other job starts, and the health server, the outbox and advisor pools and the AMQP connection
 are closed.
 
+## Metrics (HU-OBS-001)
+
+`GET /metrics` on the health port (8000) serves, for the Prometheus of `qone-infra`
+(`qone-worker:8000/metrics` on the platform network): `worker_job_runs_total{job,outcome}`
+(`ok`/`failed`), `worker_events_relayed_total{source}` (per domain outbox),
+`worker_reservations_expired_total`, and the common `http_server_requests_total` and
+`http_server_request_duration_seconds` of its own HTTP (`route` is `/health` or `unmatched`; the
+scrape is not counted).
+
 ## How to run it
 
 ```bash

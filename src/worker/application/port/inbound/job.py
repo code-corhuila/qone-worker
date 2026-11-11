@@ -12,6 +12,8 @@ class RunReport:
     processed: int
     failed: int
     timed_out: bool = False
+    processed_by: tuple[tuple[str, int], ...] = ()
+    """How many were processed per source, when a job has several (the relay: per domain outbox)."""
 
 
 @dataclass(frozen=True)
