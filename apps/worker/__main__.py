@@ -13,6 +13,7 @@ import sys
 import time
 
 from worker.adapter.inbound.health import serve_health
+from worker.adapter.inbound.metrics import WorkerMetrics
 from worker.adapter.inbound.scheduler import Scheduler
 from worker.adapter.outbound.advisor import PostgresAdvisorMaintenance
 from worker.adapter.outbound.catalog import CatalogHttpClient
@@ -133,9 +134,10 @@ def main() -> None:
         )
     else:
         log.warning("SERVICE_TOKEN not set: the expire-reservations job does not run")
-    scheduler = Scheduler(jobs, every, timeout)
+    metrics = WorkerMetrics()
+    scheduler = Scheduler(jobs, every, timeout, on_run=metrics.run_finished)
     checks = {"rabbitmq": lambda: broker_reachable(rabbit, BROKER_CHECK_TIMEOUT_SECONDS)}
-    server = serve_health(scheduler, int(env.get("PORT", "8000")), checks=checks)
+    server = serve_health(scheduler, int(env.get("PORT", "8000")), checks=checks, metrics=metrics)
     install_signals(scheduler)
     try:
         scheduler.serve_forever()

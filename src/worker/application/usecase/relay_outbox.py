@@ -24,6 +24,7 @@ class RelayOutbox:
     def run(self, context: RunContext) -> RunReport:
         processed = failed = 0
         timed_out = False
+        by_source: list[tuple[str, int]] = []
         for outbox in self._outboxes:
             if self._clock.now() >= context.deadline:
                 timed_out = True
@@ -55,4 +56,6 @@ class RelayOutbox:
                 continue
             processed += done
             failed += missed
-        return RunReport(self.name, processed, failed, timed_out)
+            if done:
+                by_source.append((outbox.domain, done))
+        return RunReport(self.name, processed, failed, timed_out, tuple(by_source))
