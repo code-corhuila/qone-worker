@@ -15,7 +15,7 @@ Consumers (the enrollment projections, the advisor) keep an inbox by event id. P
 hexagonal like an `-api`; the inbound adapter is a scheduler, not HTTP, and the only HTTP is a
 health endpoint.
 
-Piece page: `09-microservices/services/08-worker/README.md`. Story: `code-corhuila/qone-docs#48` (HU-PLT-001).
+Piece page: `09-microservices/services/08-worker/README.md`. Stories: `code-corhuila/qone-docs#48` (HU-PLT-001), `#58` (HU-PLT-003).
 
 ## Rules it keeps (Annex D)
 
@@ -42,6 +42,24 @@ already has) two more jobs run, both named in `09-microservices/services/06-advi
 Both claim rows with `SKIP LOCKED`, work in batches of `BATCH_SIZE` until nothing is due or the
 run's deadline passes, and appear in `/health` with their last run.
 
+## The sweep of abandoned sagas (HU-PLT-003)
+
+A seat held by an enrollment saga that never finished comes back after its reservation expires.
+The job `expire-reservations` runs every `EXPIRE_RESERVATIONS_EVERY_SECONDS` (60) and calls
+`POST /api/v1/catalog/reservations/expirations` (CA-13) of `CATALOG_API_URL` with
+`Authorization: Bearer $SERVICE_TOKEN` and `X-Correlation-Id: worker-expire-reservations-<uuid>`,
+in batches of `BATCH_SIZE` (at most 500) until a batch comes back short or the run's deadline
+passes. The worker reaches the catalog only through its API (Annex D rule 8); the rule (only
+overdue RESERVED reservations, seat back, `SeatReleased` in the outbox) lives in the catalog.
+
+Every request has its timeout (`HTTP_TIMEOUT_SECONDS`, 5) and is tried at most `HTTP_ATTEMPTS`
+(3) times with exponential backoff and full jitter (a random wait between 0 and 0.2 s x 2^n),
+only after a network error, a timeout, `429` or `5xx`; a `4xx` is never retried. A catalog that
+still does not answer fails the run, logged with its correlation id and the catalog's `traceId`;
+the next run tries again. The AMQP publish of the relay retries with the same backoff. Without
+`SERVICE_TOKEN` the job does not run (the log says so); the compose requires
+`WORKER_SERVICE_TOKEN`.
+
 ## Health and shutdown (HU-PLT-003)
 
 `GET /health` (port `PORT`, 8000) is 200 with the last run of every job only when RabbitMQ accepts
@@ -65,7 +83,8 @@ python -m apps.worker                              # health at http://localhost:
 
 Configuration: `RABBITMQ_URL` (required), one `<DOMAIN>_OUTBOX_URL` per outbox to relay (billing,
 catalog, enrollment, advisor; a missing one is simply not relayed), `RELAY_EVERY_SECONDS` (5),
-`BATCH_SIZE` (100), `RUN_TIMEOUT_SECONDS` (20). Container image and compose in `deploy/`; the
+`BATCH_SIZE` (100), `RUN_TIMEOUT_SECONDS` (20); `.env.example` lists every variable the worker
+reads (a test keeps it complete). Container image and compose in `deploy/`; the
 compose fragment is what `qone-infra` includes next to its RabbitMQ.
 
 ## Branching
