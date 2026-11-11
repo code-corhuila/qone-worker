@@ -48,10 +48,16 @@ run's deadline passes, and appear in `/health` with their last run.
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\\Scripts\\activate
 pip install -e ".[dev]"
 ruff check .
-python -m pytest                                   # with TEST_DATABASE_URL, TEST_OUTBOX_DOMAIN and TEST_RABBITMQ_URL for the relay test
+python -m pytest --cov=src --cov-fail-under=65     # with TEST_DATABASE_URL, TEST_OUTBOX_DOMAIN and TEST_RABBITMQ_URL for the relay test
 cp .env.example .env
 python -m apps.worker                              # health at http://localhost:8000/health
 ```
+
+Quality gates of `ci.yml` (HU-PLT-005): the **coverage floor is 65 %** of the lines of `src/`
+(measured 69 % without PostgreSQL and RabbitMQ, rounded down to the nearest 5; CI also runs the
+integration tests, so it measures more; raise the floor when coverage grows, never lower it),
+`pip-audit --skip-editable` fails on a dependency with a known vulnerability, and gitleaks scans
+the whole history for committed secrets.
 
 Configuration: `RABBITMQ_URL` (required), one `<DOMAIN>_OUTBOX_URL` per outbox to relay (billing,
 catalog, enrollment, advisor; a missing one is simply not relayed), `RELAY_EVERY_SECONDS` (5),

@@ -64,11 +64,26 @@ jobs:
           else
             echo "::notice::qone-advisor-db has no migrations yet; the advisor maintenance test is skipped"
           fi
-      - name: Jobs, adapters, architecture and the relay against PostgreSQL and RabbitMQ
-        run: python -m pytest
+      - name: Jobs, adapters, architecture and the relay against PostgreSQL and RabbitMQ, with the coverage floor
+        run: python -m pytest --cov=src --cov-report=term --cov-fail-under=65
         env:
           TEST_OUTBOX_DOMAIN: catalog
           TEST_RABBITMQ_URL: amqp://guest:guest@localhost:5672/%2F
+      - name: Dependency audit (known vulnerabilities)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --skip-editable
+
+  secrets:
+    # Gitleaks over the whole history of the branch: a committed secret fails the pipeline.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 detect --source /repo --redact --verbose
 
   image:
     runs-on: ubuntu-latest
