@@ -42,6 +42,16 @@ already has) two more jobs run, both named in `09-microservices/services/06-advi
 Both claim rows with `SKIP LOCKED`, work in batches of `BATCH_SIZE` until nothing is due or the
 run's deadline passes, and appear in `/health` with their last run.
 
+## Health and shutdown (HU-PLT-003)
+
+`GET /health` (port `PORT`, 8000) is 200 with the last run of every job only when RabbitMQ accepts
+a TCP connection within 2 s and no job has gone three of its periods (plus `RUN_TIMEOUT_SECONDS`
+of grace for a run in progress) without a successful run; otherwise it is 503 with the common
+envelope `SERVICE_UNAVAILABLE` and one `details` entry per problem. The image's `HEALTHCHECK`
+uses it. SIGTERM (`docker stop`) and SIGINT stop the scheduling: the run in progress finishes,
+no other job starts, and the health server, the outbox and advisor pools and the AMQP connection
+are closed.
+
 ## How to run it
 
 ```bash
