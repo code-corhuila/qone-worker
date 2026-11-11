@@ -60,6 +60,16 @@ the next run tries again. The AMQP publish of the relay retries with the same ba
 `SERVICE_TOKEN` the job does not run (the log says so); the compose requires
 `WORKER_SERVICE_TOKEN`.
 
+## Health and shutdown (HU-PLT-003)
+
+`GET /health` (port `PORT`, 8000) is 200 with the last run of every job only when RabbitMQ accepts
+a TCP connection within 2 s and no job has gone three of its periods (plus `RUN_TIMEOUT_SECONDS`
+of grace for a run in progress) without a successful run; otherwise it is 503 with the common
+envelope `SERVICE_UNAVAILABLE` and one `details` entry per problem. The image's `HEALTHCHECK`
+uses it. SIGTERM (`docker stop`) and SIGINT stop the scheduling: the run in progress finishes,
+no other job starts, and the health server, the outbox and advisor pools and the AMQP connection
+are closed.
+
 ## How to run it
 
 ```bash
